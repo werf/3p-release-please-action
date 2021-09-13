@@ -87,6 +87,7 @@ async function main () {
   const { token, fork, defaultBranch, apiUrl, repoUrl } = getGitHubInput()
 
   const bumpMinorPreMajor = getBooleanInput('bump-minor-pre-major')
+  const bumpPatchForMinorPreMajor = getBooleanInput('bump-patch-for-minor-pre-major')
   const monorepoTags = getBooleanInput('monorepo-tags')
   const packageName = core.getInput('package-name')
   const path = core.getInput('path') || undefined
@@ -135,6 +136,7 @@ async function main () {
       token,
       label: RELEASE_LABEL,
       bumpMinorPreMajor,
+      bumpPatchForMinorPreMajor,
       changelogPath,
       changelogSections,
       versionFile,
@@ -14725,10 +14727,10 @@ module.exports = function (config) {
   })
 
   return Q.all([
-    readFile(__nccwpck_require__.ab + "template1.hbs", 'utf-8'),
-    readFile(__nccwpck_require__.ab + "header1.hbs", 'utf-8'),
-    readFile(__nccwpck_require__.ab + "commit1.hbs", 'utf-8'),
-    readFile(__nccwpck_require__.ab + "footer.hbs", 'utf-8')
+    readFile(__nccwpck_require__.ab + "template2.hbs", 'utf-8'),
+    readFile(__nccwpck_require__.ab + "header2.hbs", 'utf-8'),
+    readFile(__nccwpck_require__.ab + "commit2.hbs", 'utf-8'),
+    readFile(__nccwpck_require__.ab + "footer1.hbs", 'utf-8')
   ])
     .spread((template, header, commit, footer) => {
       const writerOpts = getWriterOpts(config)
@@ -14947,10 +14949,10 @@ function conventionalChangelogWriterInit (context, options) {
     includeDetails: false,
     ignoreReverted: true,
     doFlush: true,
-    mainTemplate: readFileSync(__nccwpck_require__.ab + "template2.hbs", 'utf-8'),
-    headerPartial: readFileSync(__nccwpck_require__.ab + "header2.hbs", 'utf-8'),
-    commitPartial: readFileSync(__nccwpck_require__.ab + "commit2.hbs", 'utf-8'),
-    footerPartial: readFileSync(__nccwpck_require__.ab + "footer1.hbs", 'utf-8')
+    mainTemplate: readFileSync(__nccwpck_require__.ab + "template1.hbs", 'utf-8'),
+    headerPartial: readFileSync(__nccwpck_require__.ab + "header1.hbs", 'utf-8'),
+    commitPartial: readFileSync(__nccwpck_require__.ab + "commit1.hbs", 'utf-8'),
+    footerPartial: readFileSync(__nccwpck_require__.ab + "footer.hbs", 'utf-8')
   }, options)
 
   if ((!_.isFunction(options.transform) && _.isObject(options.transform)) || _.isUndefined(options.transform)) {
@@ -59850,7 +59852,6 @@ exports.RELEASE_PLEASE_MANIFEST = `.${exports.RELEASE_PLEASE}-manifest.json`;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ConventionalCommits = void 0;
 const chalk = __nccwpck_require__(78818);
-const semver = __nccwpck_require__(11383);
 const logger_1 = __nccwpck_require__(68809);
 const parser_1 = __nccwpck_require__(74523);
 const to_conventional_changelog_format_1 = __nccwpck_require__(89948);
@@ -59941,9 +59942,7 @@ class ConventionalCommits {
         this.commitFilter = options.commitFilter;
     }
     async suggestBump(version) {
-        const preMajor = this.bumpMinorPreMajor
-            ? semver.lt(version, 'v1.0.0')
-            : false;
+        const preMajor = !!this.bumpMinorPreMajor;
         const bump = await this.guessReleaseType(preMajor);
         logger_1.logger.info(`release as ${chalk.green(bump.releaseType)}: ${chalk.yellow(bump.reason)}`);
         return bump;
@@ -65397,6 +65396,7 @@ class Python extends release_pr_1.ReleasePR {
         }));
         const parsedPyProject = await this.getPyProject();
         const pyProject = (parsedPyProject === null || parsedPyProject === void 0 ? void 0 : parsedPyProject.project) || ((_a = parsedPyProject === null || parsedPyProject === void 0 ? void 0 : parsedPyProject.tool) === null || _a === void 0 ? void 0 : _a.poetry);
+        let projectName = packageName.name;
         if (pyProject) {
             updates.push(new pyproject_toml_1.PyProjectToml({
                 path: this.addPath('pyproject.toml'),
@@ -65404,20 +65404,19 @@ class Python extends release_pr_1.ReleasePR {
                 version: candidate.version,
                 packageName: packageName.name,
             }));
-            if (pyProject.name) {
-                updates.push(new python_file_with_version_1.PythonFileWithVersion({
-                    path: this.addPath(`${pyProject.name}/__init__.py`),
-                    changelogEntry,
-                    version: candidate.version,
-                    packageName: packageName.name,
-                }));
-            }
+            projectName = pyProject.name;
         }
         else {
             logger_1.logger.warn(parsedPyProject
                 ? 'invalid pyproject.toml'
                 : `file ${chalk.green('pyproject.toml')} did not exist`);
         }
+        updates.push(new python_file_with_version_1.PythonFileWithVersion({
+            path: this.addPath(`${projectName}/__init__.py`),
+            changelogEntry,
+            version: candidate.version,
+            packageName: packageName.name,
+        }));
         // There should be only one version.py, but foreach in case that is incorrect
         const versionPyFilesSearch = this.gh.findFilesByFilename('version.py', this.path);
         const versionPyFiles = await versionPyFilesSearch;
@@ -65633,6 +65632,9 @@ class Ruby extends release_pr_1.ReleasePR {
     }
     async buildUpdates(changelogEntry, candidate, packageName) {
         const updates = [];
+        const versionFile = this.versionFile
+            ? this.versionFile
+            : `lib/${packageName.name.replace(/-/g, '/')}/version.rb`;
         updates.push(new changelog_1.Changelog({
             path: this.addPath(this.changelogPath),
             changelogEntry,
@@ -65640,7 +65642,7 @@ class Ruby extends release_pr_1.ReleasePR {
             packageName: packageName.name,
         }));
         updates.push(new version_rb_1.VersionRB({
-            path: this.addPath(this.versionFile),
+            path: this.addPath(versionFile),
             changelogEntry,
             version: candidate.version,
             packageName: packageName.name,
@@ -86182,7 +86184,7 @@ module.exports = JSON.parse("[\"assert\",\"buffer\",\"child_process\",\"cluster\
 /***/ ((module) => {
 
 "use strict";
-module.exports = {"i8":"11.23.0"};
+module.exports = {"i8":"11.24.0"};
 
 /***/ }),
 
