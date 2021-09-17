@@ -75,6 +75,7 @@ inputs:
       {{> version | tag | githubRepo | githubOwner | changelogPath | PRNumber | PRSha | PRTitle }}.
       Literal line feeds replaced with newlines.
     required: false
+    default: ''
   release-notes-footer:
     description: |
       optionally add block of text after github release notes. Text can be templated
@@ -82,6 +83,7 @@ inputs:
       {{> version | tag | githubRepo | githubOwner | changelogPath | PRNumber | PRSha | PRTitle }}.
       Literal line feeds replaced with newlines.
     required: false
+    default: ''
 
 runs:
   using: 'node12'
