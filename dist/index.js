@@ -87,6 +87,7 @@ async function main () {
   const { token, fork, defaultBranch, apiUrl, repoUrl } = getGitHubInput()
 
   const bumpMinorPreMajor = getBooleanInput('bump-minor-pre-major')
+  const bumpPatchForMinorPreMajor = getBooleanInput('bump-patch-for-minor-pre-major')
   const monorepoTags = getBooleanInput('monorepo-tags')
   const packageName = core.getInput('package-name')
   const path = core.getInput('path') || undefined
@@ -96,6 +97,8 @@ async function main () {
   const changelogSections = changelogTypes && JSON.parse(changelogTypes)
   const versionFile = core.getInput('version-file') || undefined
   const pullRequestTitlePattern = core.getInput('pull-request-title-pattern') || undefined
+  const notesHeader = core.getInput('release-notes-header') || undefined
+  const notesFooter = core.getInput('release-notes-footer') || undefined
 
   // First we check for any merged release PRs (PRs merged with the label
   // "autorelease: pending"):
@@ -135,11 +138,14 @@ async function main () {
       token,
       label: RELEASE_LABEL,
       bumpMinorPreMajor,
+      bumpPatchForMinorPreMajor,
       changelogPath,
       changelogSections,
       versionFile,
       defaultBranch,
-      pullRequestTitlePattern
+      pullRequestTitlePattern,
+      notesHeader,
+      notesFooter
     })
 
     if (pr) {
@@ -59819,12 +59825,13 @@ exports.CommitSplit = CommitSplit;
 // See the License for the specific language governing permissions and
 // limitations under the License.
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.RELEASE_PLEASE_MANIFEST = exports.RELEASE_PLEASE_CONFIG = exports.RELEASE_PLEASE = exports.GH_API_URL = exports.DEFAULT_LABELS = void 0;
+exports.MAX_ISSUE_BODY_SIZE = exports.RELEASE_PLEASE_MANIFEST = exports.RELEASE_PLEASE_CONFIG = exports.RELEASE_PLEASE = exports.GH_API_URL = exports.DEFAULT_LABELS = void 0;
 exports.DEFAULT_LABELS = ['autorelease: pending'];
 exports.GH_API_URL = 'https://api.github.com';
 exports.RELEASE_PLEASE = 'release-please';
 exports.RELEASE_PLEASE_CONFIG = `${exports.RELEASE_PLEASE}-config.json`;
 exports.RELEASE_PLEASE_MANIFEST = `.${exports.RELEASE_PLEASE}-manifest.json`;
+exports.MAX_ISSUE_BODY_SIZE = 65536;
 //# sourceMappingURL=constants.js.map
 
 /***/ }),
@@ -59850,7 +59857,6 @@ exports.RELEASE_PLEASE_MANIFEST = `.${exports.RELEASE_PLEASE}-manifest.json`;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ConventionalCommits = void 0;
 const chalk = __nccwpck_require__(78818);
-const semver = __nccwpck_require__(11383);
 const logger_1 = __nccwpck_require__(68809);
 const parser_1 = __nccwpck_require__(74523);
 const to_conventional_changelog_format_1 = __nccwpck_require__(89948);
@@ -59941,9 +59947,7 @@ class ConventionalCommits {
         this.commitFilter = options.commitFilter;
     }
     async suggestBump(version) {
-        const preMajor = this.bumpMinorPreMajor
-            ? semver.lt(version, 'v1.0.0')
-            : false;
+        const preMajor = !!this.bumpMinorPreMajor;
         const bump = await this.guessReleaseType(preMajor);
         logger_1.logger.info(`release as ${chalk.green(bump.releaseType)}: ${chalk.yellow(bump.reason)}`);
         return bump;
@@ -60289,6 +60293,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.GitHubRelease = exports.GITHUB_RELEASE_LABEL = void 0;
 const semver_1 = __nccwpck_require__(11383);
 const logger_1 = __nccwpck_require__(68809);
+const release_notes_1 = __nccwpck_require__(80746);
 exports.GITHUB_RELEASE_LABEL = 'autorelease: tagged';
 class GitHubRelease {
     constructor(options) {
@@ -60297,15 +60302,35 @@ class GitHubRelease {
         this.gh = options.github;
         this.releasePR = options.releasePR;
         this.releaseLabel = (_a = options.releaseLabel) !== null && _a !== void 0 ? _a : exports.GITHUB_RELEASE_LABEL;
+        this.notesHeader = options.notesHeader;
+        this.notesFooter = options.notesFooter;
     }
     async createRelease(version, mergedPR) {
         let candidate;
         if (version && mergedPR) {
-            candidate = await this.releasePR.buildReleaseForVersion(version, mergedPR);
+            try {
+                candidate = await this.releasePR.buildReleaseForVersion(version, mergedPR, this.notesHeader, this.notesFooter);
+            }
+            catch (e) {
+                if (e instanceof release_notes_1.TemplatingError) {
+                    logger_1.logger.error(`Templating error while building candidate: ${e.message}`);
+                    return [undefined, undefined];
+                }
+                throw e;
+            }
             return await this.gh.createRelease(candidate.name, candidate.tag, candidate.sha, candidate.notes, this.draft);
         }
         else {
-            candidate = await this.releasePR.buildRelease();
+            try {
+                candidate = await this.releasePR.buildRelease(this.notesHeader, this.notesFooter);
+            }
+            catch (e) {
+                if (e instanceof release_notes_1.TemplatingError) {
+                    logger_1.logger.error(`Templating error while building candidate: ${e.message}`);
+                    return [undefined, undefined];
+                }
+                throw e;
+            }
         }
         if (candidate !== undefined) {
             const release = await this.gh.createRelease(candidate.name, candidate.tag, candidate.sha, candidate.notes, this.draft);
@@ -60659,7 +60684,7 @@ class GitHub {
                 upstreamRepo: this.repo,
                 title: options.title,
                 branch: options.branch,
-                description: options.body,
+                description: options.body.slice(0, constants_1.MAX_ISSUE_BODY_SIZE),
                 primary: defaultBranch,
                 force: true,
                 fork: this.fork,
@@ -62053,7 +62078,7 @@ class Manifest {
         }
     }
     async getConfigJson() {
-        var _a, _b, _c, _d, _e, _f;
+        var _a, _b, _c, _d, _e, _f, _g, _h;
         // cache config since it's loaded in validate() as well as later on and we
         // never write to it.
         if (!this.configFile) {
@@ -62069,8 +62094,10 @@ class Manifest {
                     bumpPatchForMinorPreMajor: (_d = pkgCfg['bump-patch-for-minor-pre-major']) !== null && _d !== void 0 ? _d : config['bump-patch-for-minor-pre-major'],
                     changelogSections: (_e = pkgCfg['changelog-sections']) !== null && _e !== void 0 ? _e : config['changelog-sections'],
                     changelogPath: pkgCfg['changelog-path'],
+                    notesHeader: (_f = pkgCfg['release-notes-extra-header']) !== null && _f !== void 0 ? _f : config['release-notes-extra-header'],
+                    notesFooter: (_g = pkgCfg['release-notes-extra-footer']) !== null && _g !== void 0 ? _g : config['release-notes-extra-footer'],
                     releaseAs: this.resolveReleaseAs(pkgCfg['release-as'], config['release-as']),
-                    draft: (_f = pkgCfg['draft']) !== null && _f !== void 0 ? _f : config['draft'],
+                    draft: (_h = pkgCfg['draft']) !== null && _h !== void 0 ? _h : config['draft'],
                 };
                 packages.push(pkg);
             }
@@ -62195,7 +62222,7 @@ class Manifest {
         return validConfig && validManifest;
     }
     async getReleasePR(pkg) {
-        const { releaseType, draft, ...options } = pkg;
+        const { releaseType, draft, notesHeader, notesFooter, ...options } = pkg;
         const releaserOptions = {
             monorepoTags: true,
             ...options,
@@ -62206,7 +62233,7 @@ class Manifest {
             skipDependencyUpdates: true,
             ...releaserOptions,
         });
-        return [releasePR, draft];
+        return [releasePR, draft, notesHeader, notesFooter];
     }
     async runReleasers(packagesForReleasers, sha) {
         const newManifestVersions = new Map();
@@ -62408,7 +62435,7 @@ class Manifest {
         const releases = {};
         let allReleasesCreated = !!packagesForReleasers.length;
         for (const pkg of packagesForReleasers) {
-            const [releasePR, draft] = await this.getReleasePR(pkg.config);
+            const [releasePR, draft, notesHeader, notesFooter] = await this.getReleasePR(pkg.config);
             const pkgName = (await releasePR.getPackageName()).name;
             const pkgLogDisp = `${releasePR.constructor.name}(${pkgName})`;
             if (!pkg.lastVersion) {
@@ -62423,6 +62450,8 @@ class Manifest {
                 github: this.gh,
                 releasePR,
                 draft,
+                notesHeader,
+                notesFooter,
             });
             let release;
             try {
@@ -62988,11 +63017,12 @@ class NodeWorkspaceDependencyUpdates extends plugin_1.ManifestPlugin {
         return nodePkgs;
     }
     async runLernaVersion(rpUpdatedPkgs, allPkgs) {
+        var _a;
         // Build the graph of all the packages: similar to https://git.io/Jqf1v
         const packageGraph = new package_graph_1.PackageGraph(
         // use pkg.clone() which does a shallow copy of the internal data storage
         // so we can preserve the original allPkgs for version diffing later.
-        [...allPkgs.values()].map(pkg => pkg.clone()), 'allDependencies');
+        [...allPkgs.values()].map(pkg => pkg.clone()), 'allDependencies', (_a = this.config['always-link-local']) !== null && _a !== void 0 ? _a : true);
         // release-please already did the work of @lerna/collectUpdates (identifying
         // which packages need version bumps based on conventional commits). We use
         // that as our `isCandidate` callback in @lerna/collectUpdates.collectPackages.
@@ -63617,7 +63647,7 @@ class ReleasePR {
         }
     }
     // Logic for determining what to include in a GitHub release.
-    async buildRelease() {
+    async buildRelease(notesHeader, notesFooter) {
         await this.validateConfiguration();
         const mergedPR = await this.findMergedRelease();
         if (!mergedPR) {
@@ -63630,13 +63660,27 @@ class ReleasePR {
             logger_1.logger.warn('Unable to detect release version');
             return undefined;
         }
-        return this.buildReleaseForVersion(version, mergedPR);
+        return this.buildReleaseForVersion(version, mergedPR, notesHeader, notesFooter);
     }
-    async buildReleaseForVersion(version, mergedPR) {
+    async buildReleaseForVersion(version, mergedPR, notesHeader, notesFooter) {
         const packageName = await this.getPackageName();
         const tag = this.formatReleaseTagName(version, packageName);
         const changelogContents = (await this.gh.getFileContents(this.addPath(this.changelogPath))).parsedContent;
-        const notes = release_notes_1.extractReleaseNotes(changelogContents, version);
+        const partialsMap = new Map([
+            ['PRNumber', String(mergedPR.number)],
+            ['PRSha', mergedPR.sha],
+            ['PRTitle', mergedPR.title],
+            ['changelogPath', this.changelogPath],
+            ['githubOwner', this.gh.owner],
+            ['githubRepo', this.gh.repo],
+            ['tag', tag],
+            ['version', version],
+        ]);
+        const notes = release_notes_1.generateReleaseNotes(changelogContents, version, {
+            notesHeader: notesHeader,
+            notesFooter: notesFooter,
+            partials: partialsMap,
+        });
         return {
             sha: mergedPR.sha,
             tag,
@@ -65397,6 +65441,7 @@ class Python extends release_pr_1.ReleasePR {
         }));
         const parsedPyProject = await this.getPyProject();
         const pyProject = (parsedPyProject === null || parsedPyProject === void 0 ? void 0 : parsedPyProject.project) || ((_a = parsedPyProject === null || parsedPyProject === void 0 ? void 0 : parsedPyProject.tool) === null || _a === void 0 ? void 0 : _a.poetry);
+        let projectName = packageName.name;
         if (pyProject) {
             updates.push(new pyproject_toml_1.PyProjectToml({
                 path: this.addPath('pyproject.toml'),
@@ -65404,20 +65449,19 @@ class Python extends release_pr_1.ReleasePR {
                 version: candidate.version,
                 packageName: packageName.name,
             }));
-            if (pyProject.name) {
-                updates.push(new python_file_with_version_1.PythonFileWithVersion({
-                    path: this.addPath(`${pyProject.name}/__init__.py`),
-                    changelogEntry,
-                    version: candidate.version,
-                    packageName: packageName.name,
-                }));
-            }
+            projectName = pyProject.name;
         }
         else {
             logger_1.logger.warn(parsedPyProject
                 ? 'invalid pyproject.toml'
                 : `file ${chalk.green('pyproject.toml')} did not exist`);
         }
+        updates.push(new python_file_with_version_1.PythonFileWithVersion({
+            path: this.addPath(`${projectName}/__init__.py`),
+            changelogEntry,
+            version: candidate.version,
+            packageName: packageName.name,
+        }));
         // There should be only one version.py, but foreach in case that is incorrect
         const versionPyFilesSearch = this.gh.findFilesByFilename('version.py', this.path);
         const versionPyFiles = await versionPyFilesSearch;
@@ -65633,6 +65677,9 @@ class Ruby extends release_pr_1.ReleasePR {
     }
     async buildUpdates(changelogEntry, candidate, packageName) {
         const updates = [];
+        const versionFile = this.versionFile
+            ? this.versionFile
+            : `lib/${packageName.name.replace(/-/g, '/')}/version.rb`;
         updates.push(new changelog_1.Changelog({
             path: this.addPath(this.changelogPath),
             changelogEntry,
@@ -65640,7 +65687,7 @@ class Ruby extends release_pr_1.ReleasePR {
             packageName: packageName.name,
         }));
         updates.push(new version_rb_1.VersionRB({
-            path: this.addPath(this.versionFile),
+            path: this.addPath(versionFile),
             changelogEntry,
             version: candidate.version,
             packageName: packageName.name,
@@ -68014,8 +68061,69 @@ exports.PullRequestTitle = PullRequestTitle;
 // See the License for the specific language governing permissions and
 // limitations under the License.
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.extractReleaseNotes = void 0;
+exports.extractReleaseNotes = exports.generateReleaseNotes = exports.TemplatingError = void 0;
 const errors_1 = __nccwpck_require__(93637);
+const Handlebars = __nccwpck_require__(97492);
+class TemplatingError extends Error {
+    constructor(message) {
+        super(message);
+    }
+}
+exports.TemplatingError = TemplatingError;
+/**
+ * Parse release notes for a specific release from the CHANGELOG contents,
+ * extending the result with the optional header and footer. Header and
+ * footer templated with handlebars.js. Extra partials can be exposed to
+ * the templating engine.
+ *
+ * @param {string} changelogContents The entire CHANGELOG contents
+ * @param {string} version The release version to extract notes from
+ * @param {ReleaseNotesOptions} releaseNotesOptions Optionally provide header,
+ * footer and handlebars partials.
+ */
+function generateReleaseNotes(changelogContents, version, releaseNotesOptions) {
+    let notes = extractReleaseNotes(changelogContents, version);
+    if (releaseNotesOptions === undefined ||
+        (releaseNotesOptions.notesHeader === undefined &&
+            releaseNotesOptions.notesFooter === undefined)) {
+        return notes;
+    }
+    if (releaseNotesOptions.partials !== undefined) {
+        for (const [partialName, partialValue] of releaseNotesOptions.partials) {
+            Handlebars.registerPartial(partialName, partialValue);
+        }
+    }
+    if (releaseNotesOptions.notesHeader !== undefined) {
+        const notesHeader = '\n'.concat(releaseNotesOptions.notesHeader.replace(/\\n/g, '\n'), '\n');
+        let compiledNotesHeader;
+        try {
+            compiledNotesHeader = Handlebars.compile(notesHeader, {
+                noEscape: true,
+                strict: true,
+            })({});
+        }
+        catch (e) {
+            throw new TemplatingError(`Unable to generate release notes header: ${e.message}`);
+        }
+        notes = compiledNotesHeader.concat(notes);
+    }
+    if (releaseNotesOptions.notesFooter !== undefined) {
+        const notesFooter = '\n'.concat(releaseNotesOptions.notesFooter.replace(/\\n/g, '\n'), '\n');
+        let compiledNotesFooter;
+        try {
+            compiledNotesFooter = Handlebars.compile(notesFooter, {
+                noEscape: true,
+                strict: true,
+            })({});
+        }
+        catch (e) {
+            throw new TemplatingError(`Unable to generate release notes footer: ${e.message}`);
+        }
+        notes = notes.concat(compiledNotesFooter);
+    }
+    return notes;
+}
+exports.generateReleaseNotes = generateReleaseNotes;
 /**
  * Parse release notes for a specific release from the CHANGELOG contents
  *
@@ -86182,7 +86290,7 @@ module.exports = JSON.parse("[\"assert\",\"buffer\",\"child_process\",\"cluster\
 /***/ ((module) => {
 
 "use strict";
-module.exports = {"i8":"11.23.0"};
+module.exports = {"i8":"12.0.0"};
 
 /***/ }),
 
