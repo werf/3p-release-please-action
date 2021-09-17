@@ -60,6 +60,8 @@ Automate releases with Conventional Commit Messages.
 | `default-branch`  | branch to open pull release PR against (detected by default) |
 | `pull-request-title-pattern`  | title pattern used to make release PR, defaults to using `chore${scope}: release${component} ${version}`. |
 | `changelog-path` | configure alternate path for `CHANGELOG.md`. Default `CHANGELOG.md` |
+| `release-notes-header` | Optionally add block of text before github release notes. Text can be templated with handlebars.js syntax. The template will have these partials exposed: {{> version / tag / githubRepo / githubOwner / changelogPath / PRNumber / PRSha / PRTitle }}. Literal line feeds replaced with newlines. |
+| `release-notes-footer` | Optionally add block of text after github release notes. Text can be templated with handlebars.js syntax. The template will have these partials exposed: {{> version / tag / githubRepo / githubOwner / changelogPath / PRNumber / PRSha / PRTitle }}. Literal line feeds replaced with newlines. |
 
 | output | description |
 |:---:|---|

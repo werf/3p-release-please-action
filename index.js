@@ -90,6 +90,8 @@ async function main () {
   const changelogSections = changelogTypes && JSON.parse(changelogTypes)
   const versionFile = core.getInput('version-file') || undefined
   const pullRequestTitlePattern = core.getInput('pull-request-title-pattern') || undefined
+  const notesHeader = core.getInput('release-notes-header') || undefined
+  const notesFooter = core.getInput('release-notes-footer') || undefined
 
   // First we check for any merged release PRs (PRs merged with the label
   // "autorelease: pending"):
@@ -134,7 +136,9 @@ async function main () {
       changelogSections,
       versionFile,
       defaultBranch,
-      pullRequestTitlePattern
+      pullRequestTitlePattern,
+      notesHeader,
+      notesFooter
     })
 
     if (pr) {
