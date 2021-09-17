@@ -113,7 +113,9 @@ async function main () {
       changelogPath,
       releaseType,
       defaultBranch,
-      pullRequestTitlePattern
+      pullRequestTitlePattern,
+      notesHeader,
+      notesFooter
     })
 
     if (releaseCreated) {
@@ -143,9 +145,7 @@ async function main () {
       changelogSections,
       versionFile,
       defaultBranch,
-      pullRequestTitlePattern,
-      notesHeader,
-      notesFooter
+      pullRequestTitlePattern
     })
 
     if (pr) {
